@@ -24,3 +24,7 @@ class HelloEndpointTests(APITestCase):
     def test_hello_includes_course(self):
         response = self.client.get(reverse("hello"))
         self.assertEqual(response.json()["course"], "CSC325")
+
+    def test_hello_includes_version(self):
+        response = self.client.get(reverse("hello"))
+        self.assertEqual(response.json()["version"], "1.1")
