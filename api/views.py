@@ -12,4 +12,4 @@ def health(request):
 def hello(request):
     """Greets the caller. Try /api/hello/?name=Ada"""
     name = request.query_params.get("name", "World")
-    return Response({"message": f"Hello, {name}!", "course": "CSC325"})
+    return Response({"message": f"Hello, {name}!", "course": "CSC325", "version":"1.1"})
