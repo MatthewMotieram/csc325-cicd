@@ -1,0 +1,117 @@
+name: CSC325 CI/CD
+
+# Trigger: every push to main. Pull requests into main also run Setup,
+# Dependencies and Test (so the ruleset can require them), but never Deploy.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  PYTHON_VERSION: "3.12"   # change to match the version used in the Module 8 tutorial
+
+jobs:
+  # ---------------------------------------------------------------- Stage 1
+  setup:
+    name: Setup
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Install Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Show versions
+        run: |
+          python --version
+          pip --version
+
+  # ---------------------------------------------------------------- Stage 2
+  dependencies:
+    name: Dependencies
+    needs: setup
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install packages
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Check for broken requirements
+        run: pip check
+
+      - name: List installed packages
+        run: pip list
+
+  # ---------------------------------------------------------------- Stage 3
+  test:
+    name: Test
+    needs: dependencies
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install packages
+        run: pip install -r requirements.txt
+
+      - name: Django system check
+        run: python manage.py check
+
+      # A failing test makes this command exit non-zero, which fails the job
+      # and, through "needs", stops Deploy from ever starting.
+      - name: Run test suite
+        run: python manage.py test --verbosity 2
+
+  # ---------------------------------------------------------------- Stage 4
+  deploy:
+    name: Deploy
+    needs: test                      # waits for Test to finish successfully
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: ${{ vars.APP_URL }}
+    env:
+      RENDER_DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+      APP_URL: ${{ vars.APP_URL }}
+      COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy application
+        run: |
+          echo "Deploying commit ${GITHUB_SHA::7} to production..."
+          echo "Commit message: $COMMIT_MESSAGE"
+          if [ -n "$RENDER_DEPLOY_HOOK_URL" ]; then
+            curl -fsS -X POST "$RENDER_DEPLOY_HOOK_URL" > /dev/null
+            echo "Render deploy triggered."
+          else
+            echo "No deploy hook configured - simulated deploy only."
+          fi
+          echo "Deployed successfully! App URL: ${APP_URL:-not set}"
+
+      - name: Smoke test the live app
+        if: env.RENDER_DEPLOY_HOOK_URL != '' && env.APP_URL != ''
+        run: |
+          # Render needs a minute or two to rebuild; retry for up to ~5 minutes.
+          for i in $(seq 1 30); do
+            if curl -fsS "$APP_URL/api/health/"; then
+              echo; echo "Live app is healthy."; exit 0
+            fi
+            sleep 10
+          done
+          echo "Live app did not respond in time."; exit 1
